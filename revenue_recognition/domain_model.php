@@ -1,29 +1,5 @@
 <?php
 
-// DB connection
-require_once('dbconf.php');
-class DB 
-{
-    private static $instance = null;
-    private $db = null;
-
-    private function __construct() { }
-
-    public static function getInstance() {
-        if (self::$instance == null) { self::$instance = new DB(); }
-        return self::$instance;
-    }
-
-    public function getDB() {
-        if ($this->db != null) { return $this->db; }
-        try {
-            $this->db = new \PDO('pgsql:host='.DBHOST.' dbname='.DBNAME.' user='.DBUSER.' password='.DBPASS); // define these in your dbconf.php
-            $this->db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
-        } catch (\Exception $e) { throw new \Exception("Could not open DB connection {$e->getMessage()}."); }   
-        return $this->db;
-    }
-}
-
 /**
  * Imagine a company that sells three kinds of products: word processors, databases, and spreadsheets. 
  * According to the rules, when you sign a contract for a word processor you can book all the revenue right away. 
@@ -31,103 +7,113 @@ class DB
  * If it's a database, you can book one-third today, one-third in thirty days, and one-third in sixty days.
  */
 
-// Product table data gateway
-class ProductTDG {
-    public function find($id) {
-    }
-    public function findName($id) {
-    }
-    public function update($id, $name, $type) {
-    }
-    public function insert($name, $type) {
-    }
-    public function delete($id) {
-    }
+class RevenueRecognition {
+	private $amount;
+	private $date;
+
+	public function __construct($amount, $date) {
+		$this->amount = $amount;
+		$this->date = $date;
+	}
+	public function getAmount() { return $this->amount; }
+	public function isRecognizeableBy($date_as_of) {
+		return $this->date;
+		return ($this->date > $date_as_of || $this->date == $date_as_of); // would be actual date compare function
+	}
 }
 
-// Contracts Table data gateway
-class ContractsTDG {
-    public function findContract($contract_id) {
-        switch ($contract_id) {
-            case 1:
-                return array('revenue'=>900, 'type'=>'spreadsheet', 'date_signed'=>'8/1/2016');
-            case 2:
-                return array('revenue'=>900, 'type'=>'word processor', 'date_signed'=>'8/1/2016');
-            case 3:
-                return array('revenue'=>900, 'type'=>'database', 'date_signed'=>'8/1/2016');
-            default:
-                throw new Exception("Could not find record");
-        }
-    }
+class Contract {
+	private $revenue_recognitions = array();
+	private $product;
+	private $revenue;
+	private $signed_date;
+	private $id;
 
-    public function insert($product_type, $amount) {
-            echo "INSERT INTO $product_type, $amount, now() RETURNING ID\n";
-    }
+	public function __construct($product, $revenue, $signed_date) {
+		$this->product = $product;
+		$this->revenue = $revenue;
+		$this->signed_date = $signed_date;
+	}
+	public function getRevenue() { return $this->revenue; }
+	public function getWhenSigned() { return $this->signed_date; }
+	public function recognized_revenue($date_as_of) {
+		$revenue = 0;
+		foreach ($revenue_recognitions as $r) {
+			if ($r->isRecognizeableBy($date_as_of)) {
+				$revenue += $r->getAmount();
+			}
+		}
+		return $revenue;
+	}
+	public function addRevenueRecognition(RevenueRecognition $revenue_recognition) {
+		$this->revenue_recognitions[] = $revenue_recognition;
+	}
+	public function calculateRecognitions() {
+		$this->product->calculateRevenueRecognitions($this);
+	}
+	public function dumpRR() { 
+		$this->id = 1; // would be coming from DB
+		foreach ($this->revenue_recognitions as $r) {
+			$allocation = $r->getAmount();
+			$recognized_on = $r->isRecognizeableBy($this->signed_date);
+			echo "INSERT into revenue_recognitions ('contract_id', 'amount', 'recognized_on') VALUES ($this->id, $allocation, $recognized_on)\n";	
+			$this->id++;
+		}
+	}
 }
 
-// Revenue Recogntion Table data gateway
-class RevenueRecognitionTDG {
-    private $db;
-    public function findRecognitionsFor($contract_id, $date_as_of) {
-        $find_recognitions_query = 'SELECT amount FROM revenue_recognitions WHERE contract = :contract AND recognized_on <= :recognized_on';
-        $db = DB::getInstance()->getDB();
-        $find_recognitions_stmt = $db->prepare($find_recognitions_query);
-        $params = array(
-            ':contract'=>$contract_id,
-            ':recognized_on'=>$date_as_of
-        );
-        return $find_recognitions_stmt->execute($params);
-    }
+class Product {
+	private $name;
+	private $recognition_strategy;
 
-    public function insertRecognition($contract_num, $allocation, $date_signed) {
-        echo "INSERT INTO ep_demo.revenue_recognitions ('contract', 'amount', 'recognized_on) VALUES ($contract_num, $allocation, $date_signed\n";
-    }
+	public function __construct($name, $recognition_strategy) {
+		$this->name = $name;
+		$this->recognition_strategy = $recognition_strategy;
+	}
+
+	public static function newWordProcessor($name) {
+		return new Product($name, new CompleteRecognitionStrategy());
+	}
+	public static function newSpreadSheet($name) {
+		return new Product($name, new ThreeWayRecognitionStrategy('+ 60 DAYS', '+ 90 DAYS'));
+	}
+	public static function newDatabase($name) {
+		return new Product($name, new ThreeWayRecognitionStrategy('+ 30 DAYS', '+ 60 DAYS'));
+	}
+	public function calculateRevenueRecognitions(Contract $contract) {
+		$this->recognition_strategy->calculateRevenueRecognitions($contract);
+	}
 }
 
-// Recognition Service accesses our data using our Table Data Gateways and uses transaction script to organize our business logic
-class RecognitionService {
-    public function __construct() {
-        $this->rr_tdg = new RevenueRecognitionTDG();
-        $this->c_tdg = new ContractsTDG();
-    }
-
-    public function recognizedRevenue($contract_num, $date_as_of) {
-        $db_stmt = $this->rr_tdg->findRecognitionsFor($contract_num, $date_as_of);
-        $result = 0.0;
-        while ($row = $db_stmt->fetchAll(PDO::FETCH_NAMED)) {
-            $result =+ $row['amount'];
-        }
-        return $result;
-    }
-
-    // Transaction script 
-    public function calculateRevenueRecognitions($contract_num) {
-        $contracts = $this->c_tdg->findContract($contract_num);
-        $total_revenue = $contracts['revenue'];
-        $date_signed = $contracts['date_signed'];
-        $contract_type = $contracts['type'];
-        $allocation = $total_revenue/3;
-        if ($contract_type == 'spreadsheet') {
-            //$this->rr_tdg->insertRecognition($contract_num, $allocation[0], $date_signed);
-            $this->rr_tdg->insertRecognition($contract_num, $allocation, $date_signed);
-            $this->rr_tdg->insertRecognition($contract_num, $allocation, $date_signed . ' + 60 DAYS');
-            $this->rr_tdg->insertRecognition($contract_num, $allocation, $date_signed . ' + 90 DAYS');
-        } else if ($contract_type == 'word processor') {
-            $this->rr_tdg->insertRecognition($contract_num, $total_revenue, $date_signed);
-        } else if ($contract_type == 'database') {
-            $this->rr_tdg->insertRecognition($contract_num, $allocation, $date_signed);
-            $this->rr_tdg->insertRecognition($contract_num, $allocation, $date_signed . ' + 30 DAYS');
-            $this->rr_tdg->insertRecognition($contract_num, $allocation, $date_signed . ' + 60 DAYS');
-        }
-    }
+abstract class RecognitionStrategy {
+	abstract function calculateRevenueRecognitions(Contract $contract);
 }
 
-$db = DB::getInstance();
-assert($db instanceof DB == true);
+class CompleteRecognitionStrategy {
+	public function calculateRevenueRecognitions(Contract $contract) {
+		$contract->addRevenueRecognition(new RevenueRecognition($contract->getRevenue(), $contract->getWhenSigned()));
+	}
+}
 
-$rs = new RecognitionService();
-$rs->calculateRevenueRecognitions(1);
-echo "\n";
-$rs->calculateRevenueRecognitions(2);
-echo "\n";
-$rs->calculateRevenueRecognitions(3);
+class ThreeWayRecognitionStrategy {
+	private $first_recognition_offset;
+	private $second_recognition_offset;
+	public function __construct($first_offset, $second_offset) {
+		$this->first_recognition_offset = $first_offset;
+		$this->second_recognition_offset = $second_offset;
+	}
+	public function calculateRevenueRecognitions(Contract $contract) {
+		$allocation = $contract->getRevenue() / 3;
+		$contract->addRevenueRecognition(new RevenueRecognition($allocation, $contract->getWhenSigned()));
+		$contract->addRevenueRecognition(new RevenueRecognition($allocation, $contract->getWhenSigned() . $this->first_recognition_offset));
+		$contract->addRevenueRecognition(new RevenueRecognition($allocation, $contract->getWhenSigned() . $this->second_recognition_offset));
+	}
+}
+
+$word = Product::newWordProcessor('thinking word');
+$calc = Product::newSpreadSheet('thinking calc');
+$db = Product::newDatabase('thinking db');
+
+$calc_contract = new Contract('spreadsheet', 900, '8/1/2016');
+$calc->calculateRevenueRecognitions($calc_contract);
+$calc_contract->dumpRR();

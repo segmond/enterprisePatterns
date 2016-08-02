@@ -79,8 +79,8 @@ class RevenueRecognitionTDG {
         return $find_recognitions_stmt->execute($params);
     }
 
-    public function insertRecognition($contract_num, $allocation, $date_signed) {
-        echo "INSERT INTO ep_demo.revenue_recognitions ('contract', 'amount', 'recognized_on) VALUES ($contract_num, $allocation, $date_signed\n";
+    public function insertRecognition($contract_num, $allocation, $recognized_on) {
+        echo "INSERT INTO ep_demo.revenue_recognitions ('contract', 'amount', 'recognized_on) VALUES ($contract_num, $allocation, $recognized_on\n";
     }
 }
 
